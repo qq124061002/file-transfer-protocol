@@ -16,9 +16,11 @@ const resolvePost = (req) => {
     });
 };
 
-const mergeFileChunk = async (filePath, filename) => {
-    const chunkDir = path.resolve(UPLOAD_DIR,filename);
+const mergeFileChunk = async (filePath, fileHash) => {
+    const chunkDir = path.resolve(UPLOAD_DIR,fileHash);
     const chunkPaths = await fse.readdir(chunkDir);
+    chunkPaths.sort((a, b) => a.split("-")[1] - b.split("-")[1]);
+
     await fse.writeFileSync(filePath, "");
     chunkPaths.forEach(chunkPath => {
         fse.appendFileSync(filePath, fse.readFileSync(path.resolve(chunkDir,chunkPath)));
@@ -31,12 +33,17 @@ const mergeFileChunk = async (filePath, filename) => {
 const extractExt = filename =>
   filename.slice(filename.lastIndexOf("."), filename.length); 
 
+const createUploadedList = async fileHash => {
+    return fse.existsSync(path.resolve(UPLOAD_DIR, fileHash))? await fse.readdir(path.resolve(UPLOAD_DIR, fileHash)): []
+}
+
 module.exports = class {
     async handleMerge(req, res) {
         const data = await resolvePost(req);
-        const { filename } = data;
-        const filePath = path.resolve(UPLOAD_DIR, filename);
-        await mergeFileChunk(filePath, filename);
+        const { filename, fileHash } = data;
+        const ext = extractExt(filename);
+        const filePath = path.resolve(UPLOAD_DIR, fileHash + ext);
+        await mergeFileChunk(filePath, fileHash);
 
         res.end(JSON.stringify({
             code: 200,
@@ -54,7 +61,8 @@ module.exports = class {
             }));
         } else {
             res.end(JSON.stringify({
-                shouldUpload: true
+                shouldUpload: true,
+                uploadedList: await createUploadedList(fileHash)
             }));
         }
     }
@@ -67,7 +75,15 @@ module.exports = class {
             const [chunk] = files.chunk;
             const [hash] = fields.hash;
             const [filename] = fields.filename;
-            const chunkDir = path.resolve(UPLOAD_DIR, filename);
+            const [fileHash] = fields.fileHash;
+            const filePath = path.resolve(UPLOAD_DIR, fileHash + extractExt(filename))
+
+            const chunkDir = path.resolve(UPLOAD_DIR, fileHash);
+
+            if( fse.existsSync(filePath) ) {
+                res.end("file exist.");
+                return;
+            }
 
             if(!fse.existsSync(chunkDir)) {
                 await fse.mkdirs(chunkDir);

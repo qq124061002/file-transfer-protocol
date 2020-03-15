@@ -4,7 +4,7 @@
         <input type="file" @change="fileChangeHandler">
         <el-button @click="handleUpload" :disabled="uploadDisabled">上传</el-button>
         <el-button @click="handlePause" :disabled="pauseDisabled">暂停</el-button>
-        <!-- <el-button @click="regoHandler" :disabled="regoDisabled">恢复</el-button> -->
+        <el-button @click="handleResume" :disabled="resumeDisabled">恢复</el-button>
     </div>
     <div>
         <div>计算文件 hash</div>
@@ -49,6 +49,7 @@ export default {
         requestList: [],
         uploadDisabled: false,
         pauseDisabled: true,
+        resumeDisabled: true,
         fakeUploadPercentage: 0,
         hashPercentage: 0
     }),
@@ -100,14 +101,17 @@ export default {
             return fileChunkList;
 
         },
-        async uploadChunks() {
+        async uploadChunks(uploadedList = []) {
             this.pauseDisabled = false;
 
-            const requestList = this.data.map((item) => {
+            const requestList = this.data.filter(({ hash }) =>{
+                return !uploadedList.includes(hash)
+            }).map((item) => {
                 const formData = new FormData();
                 formData.append("chunk",item.chunk);
                 formData.append("hash",item.hash);
                 formData.append("filename", this.container.file.name);
+                formData.append("fileHash", this.container.hash);
 
                 return formData;
             }).map(async (formdata,index) => {
@@ -120,7 +124,10 @@ export default {
             })
 
             await Promise.all(requestList);
-            //await this.mergeRequest();
+            
+            if(uploadedList.length + requestList.length === this.data.length) {
+                await this.mergeRequest();
+            }
         },
         async mergeRequest() {
             await this.request({
@@ -129,7 +136,8 @@ export default {
                     "content-type": "application/json"
                 },
                 data: JSON.stringify({
-                    filename: this.container.file.name
+                    filename: this.container.file.name,
+                    fileHash: this.container.hash
                 })
             })
         },
@@ -160,12 +168,22 @@ export default {
                 }
             })
         },
+        async handleResume() {
+            this.resumeDisabled = true;
+
+            const { uploadedList } = await this.verifyUpload(
+                this.container.file.name,
+                this.container.hash
+            )
+
+            await this.uploadChunks(uploadedList);
+        },
         async handleUpload() {
             if(!this.container.file) return;
             const fileChunkList = this.fileSplit(this.container.file);
             this.container.hash = await this.calculateHash(fileChunkList);
 
-            const { shouldUpload } = await this.verifyUpload(
+            const { shouldUpload, uploadedList } = await this.verifyUpload(
                 this.container.file.name,
                 this.container.hash
             )
@@ -184,7 +202,7 @@ export default {
                     percentage: 0
             }));
 
-            await this.uploadChunks();
+            await this.uploadChunks(uploadedList);
         },
         createProgressHandler(item) {
             return e => {
@@ -198,6 +216,7 @@ export default {
 
             this.requestList = [];
             this.pauseDisabled = true;
+            this.resumeDisabled = false;
         },
         request({
             url,
