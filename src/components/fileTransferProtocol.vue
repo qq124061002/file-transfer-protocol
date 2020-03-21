@@ -2,9 +2,9 @@
 <div>
     <div class="upload-box">
         <input type="file" @change="fileChangeHandler">
-        <el-button @click="handleUpload" :disabled="uploadDisabled">上传</el-button>
-        <el-button @click="handlePause" :disabled="pauseDisabled">暂停</el-button>
-        <el-button @click="handleResume" :disabled="resumeDisabled">恢复</el-button>
+        <el-button @click="handleUpload">上传</el-button>
+        <el-button @click="handlePause">暂停</el-button>
+        <el-button @click="handleResume">恢复</el-button>
     </div>
     <div>
         <div>计算文件 hash</div>
@@ -37,19 +37,19 @@
 </template>
 
 <script>
-const SIZE = 10 * 1024 * 1024;
+const SIZE = 10 * 1024 * 1024;  //切片大小
 
 export default {
     name: 'fileTransferProtocol',
     data: () => ({
         container: {
-            file: null
+            file: null,
+            hash: "",
+            worker: null
         },
         data: [],
         requestList: [],
-        uploadDisabled: false,
-        pauseDisabled: true,
-        resumeDisabled: true,
+        status: '',
         fakeUploadPercentage: 0,
         hashPercentage: 0
     }),
@@ -102,26 +102,24 @@ export default {
 
         },
         async uploadChunks(uploadedList = []) {
-            this.pauseDisabled = false;
 
-            const requestList = this.data.filter(({ hash }) =>{
-                return !uploadedList.includes(hash)
-            }).map((item) => {
+            const requestList = this.data.filter(({ hash }) => !uploadedList.includes(hash))
+            .map(({ chunk, hash, index }) => {
                 const formData = new FormData();
-                formData.append("chunk",item.chunk);
-                formData.append("hash",item.hash);
+                formData.append("chunk",chunk);
+                formData.append("hash",hash);
                 formData.append("filename", this.container.file.name);
                 formData.append("fileHash", this.container.hash);
 
-                return formData;
-            }).map(async (formdata,index) => {
+                return {formData, index};
+            }).map(async ({formData,index}) => 
                 this.request({
                     url: "http://localhost:3000/upload",
-                    data: formdata,
+                    data: formData,
                     onProgress: this.createProgressHandler(this.data[index]),
                     requestList: this.requestList
                 })
-            })
+            )
 
             await Promise.all(requestList);
             
@@ -137,9 +135,12 @@ export default {
                 },
                 data: JSON.stringify({
                     filename: this.container.file.name,
-                    fileHash: this.container.hash
+                    fileHash: this.container.hash,
+                    size: SIZE
                 })
             })
+
+            this.$message.success("上传成功");
         },
         async verifyUpload(filename, fileHash) {
             const { data } = await this.request({
@@ -169,8 +170,6 @@ export default {
             })
         },
         async handleResume() {
-            this.resumeDisabled = true;
-
             const { uploadedList } = await this.verifyUpload(
                 this.container.file.name,
                 this.container.hash
@@ -197,9 +196,9 @@ export default {
                     fileHash: this.container.hash,
                     chunk: fileChunk.file,
                     index: index,
-                    hash: this.container.file.name + '_' + index,
+                    hash: this.container.hash + '-' + index,
                     size: fileChunk.file.size,
-                    percentage: 0
+                    percentage: uploadedList.includes(index) ? 100 : 0
             }));
 
             await this.uploadChunks(uploadedList);
@@ -215,8 +214,6 @@ export default {
             })
 
             this.requestList = [];
-            this.pauseDisabled = true;
-            this.resumeDisabled = false;
         },
         request({
             url,
